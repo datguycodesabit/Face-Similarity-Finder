@@ -1,0 +1,64 @@
+[project]
+name = "face-structure-finder"
+version = "0.1.0"
+description = "Local-only facial landmark geometry comparison against LFW"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "jinja2>=3.1,<4",
+  "mediapipe>=0.10.21,<0.11",
+  "numpy>=2.0,<3",
+  "pillow>=11,<13",
+  "python-multipart>=0.0.20,<1",
+  "typer>=0.15,<1",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[project.scripts]
+face-match = "face_match.cli:app"
+
+[dependency-groups]
+dev = [
+  "httpx>=0.28,<1",
+  "mypy>=1.15,<2",
+  "pytest>=8.3,<9",
+  "pytest-cov>=6,<7",
+  "ruff>=0.11,<1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/face_match"]
+
+[tool.hatch.build]
+include = [
+  "src/face_match/**/*.py",
+  "src/face_match/templates/*.html",
+  "src/face_match/static/*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [".uv-cache", ".uv-python", ".browser-fixture", "artifacts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/face_match/cli.py" = ["B008"]
+"src/face_match/web.py" = ["B008"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["face_match"]
+exclude = [".uv-cache", ".uv-python", ".browser-fixture", "artifacts"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
