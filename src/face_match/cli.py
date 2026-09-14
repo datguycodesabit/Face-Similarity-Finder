@@ -9,11 +9,17 @@ from urllib.error import URLError
 
 import typer
 
+from .commons_candidates import discover_candidates, write_candidates
+from .commons_curator import CommonsServiceError, curate_gallery, load_candidate_catalog
+from .commons_pack import download_manifest_images, load_manifest
 from .config import Settings
 from .database import Database
 from .detector import MediaPipeDetector
 from .geometry import LANDMARK_VERSION
 from .indexer import index_dataset
+from .mica import MICA_LICENSE_URL, MicaConfiguration, MicaWorkerClient
+from .v3_database import V3Database
+from .v3_indexer import index_v3_gallery
 
 app = typer.Typer(no_args_is_help=True, help="Local facial-structure similarity finder.")
 
@@ -112,6 +118,139 @@ def prepare_lfw(
         _safe_extract(archive, settings.dataset_path.parent)
     archive_path.unlink(missing_ok=True)
     typer.echo(f"Prepared {settings.dataset_path}")
+
+
+@app.command("check-mica")
+def check_mica() -> None:
+    """Report exact setup steps for the separately licensed local MICA dependency."""
+    settings = Settings.from_env()
+    configuration = MicaConfiguration.from_env(settings.project_root)
+    problems = configuration.problems()
+    typer.echo(f"MICA license: {MICA_LICENSE_URL}")
+    if problems:
+        for problem in problems:
+            typer.echo(f"- {problem}", err=True)
+        raise typer.Exit(1)
+    typer.echo("MICA, its weights, and FLAME are configured for local V3 analysis.")
+
+
+@app.command("prepare-commons")
+def prepare_commons(
+    manifest: Path | None = typer.Option(None, "--manifest", exists=True, dir_okay=False),
+    accept_commons_notice: bool = typer.Option(False, "--accept-commons-notice"),
+) -> None:
+    """Validate and download the checksum-locked, per-file-attributed Commons pack."""
+    if not accept_commons_notice:
+        raise typer.BadParameter(
+            "Review each Commons file's attribution/license, then re-run with "
+            "--accept-commons-notice."
+        )
+    settings = Settings.from_env()
+    manifest_path = manifest or settings.commons_manifest_path
+    if manifest_path is None:
+        raise typer.BadParameter("A Commons manifest path is required.")
+    gallery = load_manifest(manifest_path)
+    destination = settings.v3_dataset_path or settings.project_root / "data" / "commons_v3"
+
+    def progress(done: int, total: int, identity: object, image: object) -> None:
+        if done == 1 or done == total or done % 50 == 0:
+            typer.echo(f"[{done}/{total}] Commons references")
+
+    summary = download_manifest_images(gallery, destination, progress)
+    typer.echo(f"Commons pack ready: {summary}")
+
+
+@app.command("discover-commons")
+def discover_commons(
+    output: Path = typer.Option(
+        Path("manifests/commons-candidates.json"), "--output", dir_okay=False
+    ),
+    limit: int = typer.Option(2000, "--limit", min=500, max=5000),
+) -> None:
+    """Create a surplus Wikidata/Commons candidate list for later local vision curation."""
+    payload = discover_candidates(limit)
+    write_candidates(output.resolve(), payload)
+    typer.echo(
+        f"Saved {payload['candidate_count']} unaccepted candidates to {output.resolve()}. "
+        "They still require MediaPipe/MICA filtering before entering the 500-person manifest."
+    )
+
+
+@app.command("curate-commons")
+def curate_commons(
+    candidates: Path = typer.Option(
+        Path("manifests/commons-candidates.json"), "--candidates", exists=True, dir_okay=False
+    ),
+    output: Path = typer.Option(Path("manifests/commons-v3-500.json"), "--output", dir_okay=False),
+    accept_commons_notice: bool = typer.Option(False, "--accept-commons-notice"),
+) -> None:
+    """Build the exact 500-person manifest using local MediaPipe and MICA gates."""
+    if not accept_commons_notice:
+        raise typer.BadParameter(
+            "Review Commons attribution/reuse requirements, then re-run with "
+            "--accept-commons-notice."
+        )
+    settings = Settings.from_env()
+    detector = MediaPipeDetector(settings.model_path)
+    mica = MicaWorkerClient(MicaConfiguration.from_env(settings.project_root))
+    destination = settings.v3_dataset_path or settings.project_root / "data" / "commons_v3"
+
+    def progress(accepted: int, rejected: int, name: str) -> None:
+        if accepted == 1 or (accepted > 0 and accepted % 10 == 0) or rejected % 25 == 0:
+            typer.echo(f"accepted={accepted}/500 rejected={rejected} latest={name}")
+
+    try:
+        try:
+            summary = curate_gallery(
+                load_candidate_catalog(candidates),
+                destination,
+                output.resolve(),
+                detector,
+                mica,
+                settings,
+                progress=progress,
+            )
+        except CommonsServiceError as error:
+            typer.echo(
+                f"{error}. The curation checkpoint is safe; wait for the Commons cooldown "
+                "and rerun the same command.",
+                err=True,
+            )
+            raise typer.Exit(code=1) from error
+    finally:
+        mica.close()
+        detector.close()
+    typer.echo(f"Commons curation complete: {summary}")
+
+
+@app.command("index-v3")
+def index_v3(
+    manifest: Path | None = typer.Option(None, "--manifest", exists=True, dir_okay=False),
+) -> None:
+    """Build or resume the separate MICA/FLAME identity-prototype index."""
+    settings = Settings.from_env()
+    manifest_path = manifest or settings.commons_manifest_path
+    if manifest_path is None:
+        raise typer.BadParameter("A Commons manifest path is required.")
+    database_path = (
+        settings.v3_database_path or settings.project_root / "data" / "face_match_v3.sqlite3"
+    )
+    gallery = load_manifest(manifest_path)
+    detector = MediaPipeDetector(settings.model_path)
+    mica = MicaWorkerClient(MicaConfiguration.from_env(settings.project_root))
+
+    def progress(done: int, total: int, name: str) -> None:
+        if done == 1 or done == total or done % 10 == 0:
+            typer.echo(f"[{done}/{total}] {name}")
+
+    try:
+        summary = index_v3_gallery(
+            gallery, V3Database(database_path), detector, mica, settings, progress
+        )
+    finally:
+        mica.close()
+        detector.close()
+    typer.echo(f"V3 index complete: {summary}")
 
 
 @app.command("index")

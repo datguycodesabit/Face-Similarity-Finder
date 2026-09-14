@@ -1,189 +1,219 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from contextlib import ExitStack
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from fastapi.testclient import TestClient
-from numpy.typing import NDArray
-from PIL import Image
 
 from face_match.config import Settings
-from face_match.database import Database
-from face_match.detector import Detection, MediaPipeDetector
-from face_match.geometry import (
-    DENSE_WEIGHTS,
-    aggregate_views,
-    descriptor_vector,
-    rms_distance,
-    shape_measurements,
-    weighted_dense_distance,
+from face_match.detector import Detection, Detector, MediaPipeDetector
+from face_match.mica import (
+    MicaConfiguration,
+    MicaEngine,
+    MicaViewResult,
+    MicaWorkerClient,
+    aggregate_mica_views,
 )
-from face_match.matcher import rank_shape_matches
+from face_match.v3_database import V3Database
+from face_match.v3_matcher import rank_v3_matches
 from face_match.web import create_app
 
 
+class RecordingMica:
+    def __init__(self, engine: MicaEngine) -> None:
+        self.engine = engine
+        self.engine_version = engine.engine_version
+        self.results: list[list[MicaViewResult]] = []
+
+    def analyze(
+        self,
+        images: Sequence[bytes],
+        *,
+        validate_identity: bool = False,
+        anchor_index: int = 0,
+    ) -> list[MicaViewResult]:
+        result = self.engine.analyze(
+            images,
+            validate_identity=validate_identity,
+            anchor_index=anchor_index,
+        )
+        self.results.append(result)
+        return result
+
+    def close(self) -> None:
+        self.engine.close()
+
+
 class RecordingDetector:
-    def __init__(self, detector: MediaPipeDetector) -> None:
+    def __init__(self, detector: Detector) -> None:
         self.detector = detector
         self.model_version = detector.model_version
         self.results: list[Detection] = []
 
-    def detect_one(self, image: Image.Image) -> Detection:
+    def detect_one(self, image: Any) -> Detection:
         result = self.detector.detect_one(image)
         self.results.append(result)
         return result
 
     def close(self) -> None:
-        self.detector.close()
+        close = getattr(self.detector, "close", None)
+        if callable(close):
+            close()
 
 
-def _oracle_distance(
-    query: NDArray[np.float64],
-    query_measurements: Mapping[str, float],
-    reference: NDArray[np.float64],
-    reference_measurements: Mapping[str, float],
-) -> float:
-    moving = reference - np.average(reference, axis=0, weights=DENSE_WEIGHTS)
-    target = query - np.average(query, axis=0, weights=DENSE_WEIGHTS)
-    left, _, right = np.linalg.svd((moving * DENSE_WEIGHTS[:, None]).T @ target)
-    rotation = left @ right
-    if np.linalg.det(rotation) < 0:
-        left[:, -1] *= -1
-        rotation = left @ right
-    silhouette = float(
-        np.sqrt(
-            np.average(np.sum((target - moving @ rotation) ** 2, axis=1), weights=DENSE_WEIGHTS)
+def _digest(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _snapshot(root: Path, database: Path) -> dict[str, str | None]:
+    tracked_roots = (root / "src", root / "scripts", root / "tests")
+    files = [
+        path
+        for tracked_root in tracked_roots
+        if tracked_root.is_dir()
+        for path in tracked_root.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts
+    ]
+    files.extend(path for path in (root / "README.md", root / "pyproject.toml") if path.is_file())
+    snapshot = {str(path.relative_to(root)): _digest(path) for path in files}
+    snapshot["<v3-database>"] = _digest(database)
+    return snapshot
+
+
+def _post(client: TestClient, paths: Mapping[str, Path]) -> Any:
+    names = ("front", "left", "right")
+    with ExitStack() as stack:
+        streams = [stack.enter_context(paths[name].open("rb")) for name in names]
+        return client.post(
+            "/api/analyze",
+            files={
+                name: (paths[name].name, stream, "image/jpeg")
+                for name, stream in zip(names, streams, strict=True)
+            },
+            data={
+                "length": "any",
+                "texture": "unsure",
+                "effort": "moderate",
+                "goal": "none",
+            },
         )
-    )
-    descriptor = float(
-        np.sqrt(
-            np.mean(
-                (descriptor_vector(query_measurements) - descriptor_vector(reference_measurements))
-                ** 2
-            )
-        )
-    )
-    return 0.7 * descriptor + 0.3 * silhouette
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run a real three-view v2 acceptance check.")
+    parser = argparse.ArgumentParser(description="Run the real local V3 three-view smoke test.")
     parser.add_argument("front", type=Path)
     parser.add_argument("left", type=Path)
     parser.add_argument("right", type=Path)
+    parser.add_argument("--runs", type=int, default=3)
     args = parser.parse_args()
+    if args.runs < 1:
+        raise SystemExit("--runs must be at least 1")
 
     settings = Settings.from_env()
+    database_path = (
+        settings.v3_database_path or settings.project_root / "data" / "face_match_v3.sqlite3"
+    )
+    database = V3Database(database_path)
+    if database.status()["prototypes"] < 5 or database.active_hybrid_calibration() is None:
+        raise SystemExit("V3 prototype index/calibration is not ready; run `face-match index-v3`.")
+
     detector = RecordingDetector(MediaPipeDetector(settings.model_path))
-    database = Database(settings.database_path)
-    app = create_app(settings, detector)
-    before = {path.resolve() for path in settings.project_root.rglob("*") if path.is_file()}
+    mica = RecordingMica(MicaWorkerClient(MicaConfiguration.from_env(settings.project_root)))
+    app = create_app(settings, detector, mica)
+    paths = {"front": args.front, "left": args.left, "right": args.right}
+    before = _snapshot(settings.project_root, database_path)
     timings: list[float] = []
+    response: Any = None
     with TestClient(app) as client:
-        for _ in range(3):
+        for _ in range(args.runs):
             started = time.perf_counter()
-            with (
-                args.front.open("rb") as front,
-                args.left.open("rb") as left,
-                args.right.open("rb") as right,
-            ):
-                response = client.post(
-                    "/api/analyze",
-                    files={
-                        "front": (args.front.name, front, "image/jpeg"),
-                        "left": (args.left.name, left, "image/jpeg"),
-                        "right": (args.right.name, right, "image/jpeg"),
-                    },
-                    data={
-                        "length": "medium",
-                        "texture": "wavy",
-                        "effort": "moderate",
-                        "goal": "add-width",
-                    },
-                )
+            response = _post(client, paths)
             timings.append(time.perf_counter() - started)
             if response.status_code != 200:
-                raise SystemExit(f"Three-view API failed: {response.status_code} {response.text}")
-    median_elapsed = float(np.median(timings))
-    after = {path.resolve() for path in settings.project_root.rglob("*") if path.is_file()}
-    payload = response.json()
-    if len(payload["matches"]) != 5 or len({item["identity"] for item in payload["matches"]}) != 5:
-        raise SystemExit("Three-view API did not return five unique identities")
-    if len(payload["recommendations"]) != 3 or len(payload["diagnostics"]) != 3:
-        raise SystemExit("Shape guidance or diagnostics are incomplete")
-    triplet = detector.results[:3]
-    legacy_vectors = [item.legacy_normalized for item in triplet]
-    if any(vector is None for vector in legacy_vectors):
-        raise SystemExit("Real detector did not expose the legacy comparison vectors")
-    legacy = [vector for vector in legacy_vectors if vector is not None]
-    pairs = ((0, 1), (0, 2), (1, 2))
-    v1_instability = float(np.mean([rms_distance(legacy[a], legacy[b]) for a, b in pairs]))
-    v2_instability = float(
-        np.mean(
-            [
-                weighted_dense_distance(triplet[a].normalized, triplet[b].normalized)
-                for a, b in pairs
-            ]
-        )
-    )
-    if v2_instability >= v1_instability:
-        raise SystemExit(
-            f"V2 did not improve held-out pose stability: {v2_instability:.6f} "
-            f">= legacy {v1_instability:.6f}"
-        )
-    query_vector, _ = aggregate_views([item.normalized for item in triplet])
-    query_measurements = shape_measurements(query_vector)
-    direct = rank_shape_matches(database, query_vector, query_measurements)
-    best: dict[str, tuple[float, int]] = {}
-    for row in database.indexed_rows():
-        distance = _oracle_distance(
-            query_vector,
-            query_measurements,
-            database.decode_vector(row),
-            json.loads(row["descriptor_json"]),
-        )
-        name, image_id = str(row["name"]), int(row["id"])
-        if name not in best or (distance, image_id) < best[name]:
-            best[name] = (distance, image_id)
-    oracle = sorted(
-        ((name, image_id, distance) for name, (distance, image_id) in best.items()),
-        key=lambda item: (item[2], item[0]),
-    )[:5]
-    api = [
-        (
-            item["identity"],
-            int(item["image_url"].rsplit("/", 1)[1]),
-            float(item["distance"]),
-        )
-        for item in payload["matches"]
-    ]
-    expected = [(name, image_id, round(distance, 8)) for name, image_id, distance in oracle]
-    direct_result = [(item.identity, item.image_id, round(item.distance, 8)) for item in direct]
-    if api != direct_result:
-        raise SystemExit(f"API ranking differs from direct matcher: {api} != {direct_result}")
-    if [(name, image_id) for name, image_id, _ in api] != [
-        (name, image_id) for name, image_id, _ in expected
-    ] or not np.allclose(
-        [distance for _, _, distance in api],
-        [distance for _, _, distance in expected],
-        rtol=0.0,
-        atol=5e-6,
-    ):
-        raise SystemExit(f"API ranking differs from independent oracle: {api} != {expected}")
-    if median_elapsed >= 5.0:
-        raise SystemExit(f"Median analysis exceeded the five-second target: {median_elapsed:.3f}s")
+                raise SystemExit(f"V3 API failed: {response.status_code} {response.text}")
+
+        duplicate = {"front": args.front, "left": args.front, "right": args.right}
+        failure = _post(client, duplicate)
+        if failure.status_code != 422:
+            raise SystemExit(f"Expected duplicate-photo rejection; received {failure.status_code}")
+
+    after = _snapshot(settings.project_root, database_path)
     if before != after:
-        raise SystemExit(f"Query analysis changed project files: {before ^ after}")
-    names = ", ".join(item["identity"] for item in payload["matches"])
+        changed = sorted(
+            key for key in before.keys() | after.keys() if before.get(key) != after.get(key)
+        )
+        raise SystemExit(f"Privacy gate failed; query processing changed: {changed}")
+
+    assert response is not None
+    payload = response.json()
+    matches = payload.get("matches", [])
+    if len(matches) != 5 or len({item["identity"] for item in matches}) != 5:
+        raise SystemExit("V3 API did not return five unique identity prototypes")
+    if tuple(matches[0].get("breakdown", {})) != (
+        "jaw_chin",
+        "outline_cheeks",
+        "global_proportions",
+        "eye_brow_geometry",
+        "nose_midface_geometry",
+    ):
+        raise SystemExit("V3 five-part score contract is incomplete")
+    if any(not item.get("attribution", {}).get("commons_url") for item in matches):
+        raise SystemExit("A V3 result is missing Commons attribution")
+
+    aggregate = aggregate_mica_views(mica.results[args.runs - 1])
+    query_detections = detector.results[(args.runs - 1) * 3 : args.runs * 3]
+    accepted_measurements = [
+        query_detections[index].v3_measurements for index in aggregate.accepted_views
+    ]
+    measurements = {
+        name: float(np.median([sample[name] for sample in accepted_measurements]))
+        for name in accepted_measurements[0]
+    }
+    calibration = database.active_hybrid_calibration()
+    assert calibration is not None
+    rank_started = time.perf_counter()
+    direct = rank_v3_matches(database, aggregate, measurements, calibration)
+    rank_elapsed = time.perf_counter() - rank_started
+    direct_order = [item.identity for item in direct]
+    api_order = [str(item["identity"]) for item in matches]
+    if direct_order != api_order:
+        raise SystemExit(
+            f"API ranking is stale or differs from direct V3 ranking: {api_order} != {direct_order}"
+        )
+
+    median_elapsed = float(np.median(timings))
+    if median_elapsed >= 20.0:
+        raise SystemExit(f"Median MICA analysis exceeded 20 seconds: {median_elapsed:.3f}s")
+    if rank_elapsed >= 1.0:
+        raise SystemExit(f"V3 database ranking exceeded one second: {rank_elapsed:.3f}s")
+
     print(
-        f"PASS median {median_elapsed:.3f}s · "
-        f"{payload['shape']['primary']}/{payload['shape']['secondary']} "
-        f"· {payload['shape']['three_view_agreement']:.1f}% agreement · "
-        f"stability v2 {v2_instability:.4f} < v1 {v1_instability:.4f} · {names}"
+        json.dumps(
+            {
+                "status": "PASS",
+                "analysis_version": payload["analysis_version"],
+                "engine": payload["engine"],
+                "gallery_version": payload["gallery_version"],
+                "median_analysis_seconds": round(median_elapsed, 3),
+                "ranking_seconds": round(rank_elapsed, 4),
+                "shape": [payload["shape"]["primary"], payload["shape"]["secondary"]],
+                "matches": api_order,
+            },
+            indent=2,
+        )
     )
 
 

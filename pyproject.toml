@@ -1,7 +1,7 @@
 [project]
 name = "face-structure-finder"
 version = "0.1.0"
-description = "Local-only facial landmark geometry comparison against LFW"
+description = "Local-only calibrated 3D facial-structure matching for haircut planning"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
@@ -57,7 +57,7 @@ select = ["E", "F", "I", "B", "UP", "SIM"]
 python_version = "3.11"
 strict = true
 packages = ["face_match"]
-exclude = [".uv-cache", ".uv-python", ".browser-fixture", "artifacts"]
+exclude = [".uv-cache", ".uv-python", ".browser-fixture", "artifacts", "models"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

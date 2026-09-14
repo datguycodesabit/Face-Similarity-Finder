@@ -25,11 +25,11 @@ async function refreshStatus() {
     ready = status.model_ready && status.index_ready;
     statusBadge.className = `status-badge ${ready ? 'ready' : 'blocked'}`;
     statusBadge.textContent = ready
-      ? `${status.counts.identities.toLocaleString()} eligible identities`
+      ? `${status.prototype_count.toLocaleString()} calibrated Commons prototypes`
       : (!status.model_ready ? 'Model setup needed'
         : status.indexing_status === 'running'
-          ? `${status.counts.indexed.toLocaleString()} / ${status.counts.total.toLocaleString()} rebuilt`
-          : 'Dense v2 reindex needed');
+          ? `${status.prototype_count.toLocaleString()} prototypes built`
+          : (status.setup_steps?.[0] || 'V3 setup needed'));
     updateSubmit();
   } catch (_) {
     statusBadge.className = 'status-badge blocked';
@@ -99,10 +99,26 @@ function titleCase(value) {
   return value.replaceAll('_', ' ').replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[character]);
+}
+
 function renderShape(shape) {
   document.querySelector('#shapeBlend').textContent = `Mostly ${shape.primary}, with ${shape.secondary} influence`;
   document.querySelector('#shapeCaveat').textContent = shape.caveat;
   document.querySelector('#agreementBadge').textContent = `${shape.three_view_agreement.toFixed(1)}% three-view agreement`;
+  const evidence = document.querySelector('#shapeEvidence');
+  evidence.replaceChildren();
+  shape.memberships.forEach(item => {
+    const row = document.createElement('p');
+    const details = item.supporting_measurements.map(measurement =>
+      `${titleCase(measurement.name)} ${measurement.population_percentile.toFixed(0)}th percentile`
+    ).join(' · ');
+    row.textContent = `${titleCase(item.label)} ${Number(item.score).toFixed(1)} — ${details}`;
+    evidence.append(row);
+  });
   const labels = {
     length_width_ratio: 'Length ÷ width', forehead_cheek_ratio: 'Forehead ÷ cheeks',
     temple_cheek_ratio: 'Temples ÷ cheeks', jaw_cheek_ratio: 'Jaw ÷ cheeks',
@@ -144,14 +160,24 @@ function renderMatches(matches) {
   matches.forEach(match => {
     const card = document.createElement('article');
     card.className = 'result-card';
-    card.innerHTML = `<div class="result-visual"><span class="result-rank">${match.rank}</span><img alt="LFW structural reference of ${match.identity}" src="${match.image_url}"><canvas aria-hidden="true"></canvas></div><div class="result-info"><h3>${match.identity}</h3><div class="metric"><span>Shape distance</span><strong>${match.distance.toFixed(4)}</strong></div><div class="metric"><span>Silhouette</span><strong>${match.breakdown.silhouette.toFixed(4)}</strong></div><div class="metric"><span>Proportions</span><strong>${match.breakdown.jaw_chin_and_proportions.toFixed(4)}</strong></div></div>`;
-    drawOverlay(card.querySelector('canvas'), card.querySelector('img'), match.overlay);
+    const componentLabels = {
+      jaw_chin: 'Jaw + chin · 45%', outline_cheeks: 'Outline + cheeks · 20%',
+      global_proportions: 'Global proportions · 15%', eye_brow_geometry: 'Eyes + brows · 10%',
+      nose_midface_geometry: 'Nose + midface · 10%'
+    };
+    const breakdown = Object.entries(match.breakdown).map(([name, value]) =>
+      `<div class="metric"><span>${componentLabels[name]}</span><strong>${Number(value).toFixed(4)}</strong></div>`
+    ).join('');
+    const points = values => values.map(([x, y]) => `${x * 100},${y * 100}`).join(' ');
+    const identity = escapeHtml(match.identity);
+    const attribution = match.attribution;
+    card.innerHTML = `<div class="result-visual"><span class="result-rank">${match.rank}</span><img alt="Commons structural reference of ${identity}" src="${escapeHtml(match.image_url)}"></div><div class="result-info"><h3>${identity}</h3><div class="metric primary-metric"><span>Calibrated shape distance</span><strong>${match.distance.toFixed(4)}</strong></div>${breakdown}<p class="match-explanation">${escapeHtml(match.explanation)}</p><details class="jaw-panel"><summary>Compare jaw contours</summary><svg viewBox="0 0 100 100" role="img" aria-label="Query and reference jaw contours"><polyline class="query-jaw" points="${points(match.jaw_comparison.query)}"></polyline><polyline class="reference-jaw" points="${points(match.jaw_comparison.reference)}"></polyline></svg><div><span><i class="query-key"></i>Your median 3D jaw</span><span><i class="reference-key"></i>Reference prototype</span></div></details><p class="attribution">Photo by ${escapeHtml(attribution.author)} · <a href="${escapeHtml(attribution.license_url)}" target="_blank" rel="noreferrer">${escapeHtml(attribution.license)}</a> · <a href="${escapeHtml(attribution.commons_url)}" target="_blank" rel="noreferrer">Commons source</a></p></div>`;
     resultsGrid.append(card);
   });
 }
 
 overlayToggle.addEventListener('change', () => {
-  resultsGrid.querySelectorAll('canvas').forEach(canvas => { canvas.hidden = !overlayToggle.checked; });
+  resultsGrid.querySelectorAll('.jaw-panel').forEach(panel => { panel.hidden = !overlayToggle.checked; });
 });
 
 form.addEventListener('submit', async event => {

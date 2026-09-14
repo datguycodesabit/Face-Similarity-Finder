@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 from io import BytesIO
 from pathlib import Path
 from typing import cast
@@ -12,9 +13,18 @@ from PIL import Image, ImageDraw
 
 from face_match.config import Settings
 from face_match.database import Database
+from face_match.mica import MicaError, MicaViewResult
+from face_match.v3_database import V3Database
 from face_match.web import create_app
 
-from .helpers import FakeDetector, SequenceDetector, dense_detection, fake_detector
+from .helpers import (
+    FakeDetector,
+    FakeMicaEngine,
+    SequenceDetector,
+    dense_detection,
+    fake_detector,
+    populate_v3_database,
+)
 
 
 def _png(size: tuple[int, int] = (120, 120)) -> bytes:
@@ -78,7 +88,15 @@ def _analysis_client(
     dataset = tmp_path / "lfw"
     dataset.mkdir(parents=True, exist_ok=True)
     settings = Settings(
-        tmp_path, tmp_path / "model.task", tmp_path / "index.sqlite3", dataset, 150_000, 500, 8
+        tmp_path,
+        tmp_path / "model.task",
+        tmp_path / "index.sqlite3",
+        dataset,
+        150_000,
+        500,
+        8,
+        v3_database_path=tmp_path / "v3.sqlite3",
+        v3_dataset_path=tmp_path / "commons",
     )
     detector = SequenceDetector(
         [
@@ -104,7 +122,8 @@ def _analysis_client(
     database.set_metadata("dataset_root", str(dataset))
     database.set_metadata("indexing_status", "complete")
     database.set_metadata("landmark_version", "structural-v2-dense-weighted-three-view")
-    return TestClient(create_app(settings, detector))
+    populate_v3_database(V3Database(tmp_path / "v3.sqlite3"), tmp_path / "commons")
+    return TestClient(create_app(settings, detector, FakeMicaEngine()))
 
 
 def test_valid_match_returns_exactly_five_ordered_distinct_results(tmp_path: Path) -> None:
@@ -121,7 +140,8 @@ def test_valid_match_returns_exactly_five_ordered_distinct_results(tmp_path: Pat
     expected = [round(float(np.sqrt(3) * index * 0.01), 8) for index in range(5)]
     assert [match["distance"] for match in matches] == expected
     assert [match["identity"] for match in matches] == [f"Reference {index}" for index in range(5)]
-    assert status["model_ready"] and status["index_ready"] and status["local_only"]
+    assert status["model_ready"] and status["local_only"]
+    assert status["index_ready"] is False
 
 
 def test_incompatible_landmark_version_requires_reindex(tmp_path: Path) -> None:
@@ -217,7 +237,16 @@ def test_three_view_analysis_returns_shape_matches_guidance_and_diagnostics(tmp_
     assert len(payload["recommendations"]) == 3
     assert len(payload["diagnostics"]) == 3
     assert payload["shape"]["primary"] != payload["shape"]["secondary"]
-    assert "silhouette" in payload["matches"][0]["breakdown"]
+    assert tuple(payload["matches"][0]["breakdown"]) == (
+        "jaw_chin",
+        "outline_cheeks",
+        "global_proportions",
+        "eye_brow_geometry",
+        "nose_midface_geometry",
+    )
+    assert payload["analysis_version"].startswith("shape-v3")
+    assert payload["matches"][0]["attribution"]["license"] == "CC-BY-4.0"
+    assert payload["matches"][0]["jaw_comparison"]["reference"]
     assert response.headers["cache-control"] == "no-store"
     assert after == before
 
@@ -249,6 +278,35 @@ def test_three_view_analysis_changes_when_the_submitted_faces_change(tmp_path: P
     assert [item["identity"] for item in first_payload["matches"]] != [
         item["identity"] for item in second_payload["matches"]
     ]
+
+
+def test_three_view_analysis_reports_mica_failure_without_retaining_query(tmp_path: Path) -> None:
+    class FailingMica(FakeMicaEngine):
+        def analyze(
+            self,
+            images: Sequence[bytes],
+            *,
+            validate_identity: bool = False,
+            anchor_index: int = 0,
+        ) -> list[MicaViewResult]:
+            del images, validate_identity, anchor_index
+            raise MicaError("reconstruction did not converge")
+
+    with _analysis_client(tmp_path) as client:
+        cast(FastAPI, client.app).state.mica_engine = FailingMica()
+        before = _file_snapshot(tmp_path)
+        response = client.post(
+            "/api/analyze",
+            files={
+                "front": ("front.png", _pattern_png(1), "image/png"),
+                "left": ("left.png", _pattern_png(3), "image/png"),
+                "right": ("right.png", _pattern_png(6), "image/png"),
+            },
+        )
+        after = _file_snapshot(tmp_path)
+    assert response.status_code == 422
+    assert "local MICA reconstruction failed" in response.json()["error"]
+    assert after == before
 
 
 def test_three_view_analysis_rejects_duplicate_and_incorrect_pose_photos(tmp_path: Path) -> None:

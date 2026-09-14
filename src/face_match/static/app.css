@@ -57,7 +57,7 @@ h2 { margin: 0; font-family: Georgia, serif; font-size: 25px; font-weight: 500; 
 .method-panel h2 { margin: 11px 0 30px; color: var(--mint); font-size: 29px; }
 .method-panel .step { color: #abc1b9; }
 .method-panel ol { margin: 0; padding: 0; list-style: none; }
-.method-panel li { display: grid; grid-template-columns: 70px 1fr; padding: 18px 0; border-top: 1px solid rgba(255,255,255,.17); }
+.method-panel li { display: grid; grid-template-columns: 88px 1fr; gap: 8px; padding: 18px 0; border-top: 1px solid rgba(255,255,255,.17); }
 .method-panel li b { font-size: 13px; color: var(--mint); }
 .method-panel li span { font-size: 13px; line-height: 1.45; color: #d2ded9; }
 .method-note { margin-top: 28px; padding: 18px; border: 1px solid rgba(200,242,91,.35); border-radius: 11px; background: rgba(255,255,255,.06); }
@@ -112,6 +112,8 @@ h2 { margin: 0; font-family: Georgia, serif; font-size: 25px; font-weight: 500; 
 .shape-card { padding: 24px; border-radius: 16px; color: white; background: var(--green); }
 .shape-blend { margin: 0; color: var(--mint); font: 500 27px/1.15 Georgia, serif; text-transform: capitalize; }
 .shape-caveat { margin: 13px 0 20px; color: #cbdad4; font-size: 11px; line-height: 1.5; }
+.shape-evidence { margin: 0 0 18px; padding: 10px 12px; border: 1px solid rgba(255,255,255,.16); border-radius: 10px; }
+.shape-evidence p { margin: 4px 0; color: #dce8e3; font-size: 9px; line-height: 1.45; }
 .selection-note { margin: 10px 0 0; color: #745f18; font-size: 12px; font-weight: 700; }
 .diagnostics { margin-top: 20px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,.18); }
 .diagnostics > p { margin: 0 0 8px; color: #cbdad4; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
@@ -137,6 +139,20 @@ h2 { margin: 0; font-family: Georgia, serif; font-size: 25px; font-weight: 500; 
 .source-section p { color: var(--muted); font-size: 13px; line-height: 1.6; }
 .source-section a { color: var(--ink); font-size: 12px; font-weight: 800; }
 footer { display: flex; justify-content: space-between; padding: 24px max(24px, calc((100vw - 1180px)/2)); border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; }
+.jaw-panel { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.jaw-panel summary { color: var(--ink); font-weight: 700; cursor: pointer; }
+.jaw-panel svg { width: 100%; height: 150px; margin-top: 10px; border-radius: 12px; background: rgba(25,60,50,.04); }
+.jaw-panel polyline { fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.query-jaw { stroke: var(--orange); }
+.reference-jaw { stroke: #327fc2; stroke-dasharray: 4 3; }
+.jaw-panel > div { display: flex; flex-wrap: wrap; gap: 12px; color: var(--muted); font-size: 9px; }
+.jaw-panel i { display: inline-block; width: 14px; height: 2px; margin-right: 5px; vertical-align: middle; }
+.query-key { background: var(--orange); }
+.reference-key { background: #327fc2; }
+.attribution { margin-top: 12px; color: var(--muted); font-size: 9px; line-height: 1.45; }
+.attribution a { color: inherit; }
+.primary-metric { padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.match-explanation { color: var(--muted); font-size: 10px; line-height: 1.5; }
 @media (max-width: 850px) {
   .workspace { grid-template-columns: 1fr; }
   .method-panel ol { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }

@@ -18,7 +18,7 @@
     <section class="intro" aria-labelledby="page-title">
       <p class="eyebrow">THREE-VIEW SHAPE ANALYSIS</p>
       <h1 id="page-title">Find faces shaped like yours—and cuts that work with it.</h1>
-      <p class="lede">Three angles reduce selfie distortion. Dense, pose-corrected face geometry finds similar LFW references and turns your proportions into practical, gender-neutral haircut guidance.</p>
+      <p class="lede">Three angles reduce selfie distortion. Calibrated 3D jaw, chin, cheek and stable feature geometry finds similar licensed Commons references and turns your proportions into practical, gender-neutral haircut guidance.</p>
     </section>
 
     <section class="workspace wide" aria-label="Face shape analysis workspace">
@@ -68,7 +68,7 @@
           <p id="selectionNote" class="selection-note" role="status" hidden>Photos changed—run a new analysis to replace the previous results.</p>
         </form>
         <div id="errorBox" class="message error" role="alert" hidden></div>
-        <div id="loadingBox" class="message loading" aria-live="polite" hidden><span class="spinner" aria-hidden="true"></span>Correcting pose and comparing dense face geometry…</div>
+        <div id="loadingBox" class="message loading" aria-live="polite" hidden><span class="spinner" aria-hidden="true"></span>Reconstructing and comparing three-view 3D face structure…</div>
         <div class="limits"><span>Exactly one face per photo</span><span>{{ min_dimension }}–{{ max_dimension }} px</span><span>Photos and preferences never retained</span></div>
       </div>
 
@@ -76,8 +76,8 @@
         <span class="step">02</span><h2>Built for haircut decisions</h2>
         <ol>
           <li><b>Capture</b><span>Front and two opposite three-quarter views</span></li>
-          <li><b>Measure</b><span>Face length, cheekbones, temples, jaw and chin</span></li>
-          <li><b>Compare</b><span>70% proportions · 30% dense silhouette</span></li>
+          <li><b>Reconstruct</b><span>Median MICA/FLAME shape from all three accepted views</span></li>
+          <li><b>Compare</b><span>80% outer structure · 20% stable inner features</span></li>
         </ol>
         <div class="method-note"><strong>Not face recognition.</strong><p>Shape labels are blended styling aids, not scientific categories. The model estimates temples and upper-face structure—not your true hairline.</p></div>
       </aside>
@@ -86,18 +86,18 @@
     <section id="resultsSection" class="results-section" hidden>
       <div class="results-heading"><div><p class="eyebrow">YOUR SHAPE PROFILE</p><h2 id="shapeTitle">Your face-shape blend</h2></div><span id="agreementBadge" class="agreement-badge"></span></div>
       <div class="shape-layout">
-        <article class="shape-card"><p id="shapeBlend" class="shape-blend"></p><p id="shapeCaveat" class="shape-caveat"></p><div id="measurementsGrid" class="measurement-grid"></div><div class="diagnostics"><p>Detected pose for this analysis</p><div id="diagnosticsGrid"></div></div></article>
+        <article class="shape-card"><p id="shapeBlend" class="shape-blend"></p><p id="shapeCaveat" class="shape-caveat"></p><div id="shapeEvidence" class="shape-evidence"></div><div id="measurementsGrid" class="measurement-grid"></div><div class="diagnostics"><p>Detected pose for this analysis</p><div id="diagnosticsGrid"></div></div></article>
         <div><p class="eyebrow">HAIRCUT DIRECTIONS</p><div id="haircutGrid" class="haircut-grid"></div></div>
       </div>
 
-      <div class="matches-heading"><div><p class="eyebrow">SIMILAR LFW FACE SHAPES</p><h2>Five closest structures</h2></div><label class="toggle"><input id="overlayToggle" type="checkbox" checked><span></span> Dense mesh</label></div>
+      <div class="matches-heading"><div><p class="eyebrow">SIMILAR COMMONS FACE SHAPES</p><h2>Five closest identity prototypes</h2></div><label class="toggle"><input id="overlayToggle" type="checkbox" checked><span></span> Jaw comparison</label></div>
       <div id="resultsGrid" class="results-grid"></div>
       <p class="score-footnote">These are structural references, not hairstyle classifications, identity claims, or calibrated probabilities.</p>
     </section>
 
     <section class="privacy-strip"><div><span aria-hidden="true">⌂</span><strong>Private by design</strong></div><p>All three photos are decoded in memory, processed on this computer, and discarded after the request—even when validation fails. Preferences are not stored.</p></section>
-    <section class="source-section"><div><p class="eyebrow">REFERENCE DATA</p><h2>Labeled Faces in the Wild</h2></div><p>LFW supplies reference faces, not haircut labels. Its age and image quality limit the examples; guidance comes from a transparent local rule set.</p><a href="https://vis-www.cs.umass.edu/lfw/" target="_blank" rel="noreferrer">Official LFW source ↗</a></section>
+    <section class="source-section"><div><p class="eyebrow">REFERENCE DATA</p><h2>Licensed Wikimedia Commons portraits</h2></div><p>Every identity is represented by one robust three-photo prototype. Every displayed portrait retains its author, license, exact revision, checksum, and Commons source.</p><a href="https://commons.wikimedia.org/wiki/Commons:Reusing_content_outside_Wikimedia" target="_blank" rel="noreferrer">Commons reuse guidance ↗</a></section>
   </main>
-  <footer><span>Face Shape Studio · local research tool</span><span>Landmark algorithm: structural-v2</span></footer>
+  <footer><span>Face Shape Studio · local personal-use tool</span><span>Analysis: calibrated MICA/FLAME structural V3</span></footer>
 </body>
 </html>

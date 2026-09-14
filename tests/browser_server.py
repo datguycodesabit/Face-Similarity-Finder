@@ -9,8 +9,14 @@ from PIL import Image, ImageDraw, ImageOps
 
 from face_match.config import Settings
 from face_match.database import Database
+from face_match.v3_database import V3Database
 from face_match.web import create_app
-from tests.helpers import SequenceDetector, dense_detection
+from tests.helpers import (
+    FakeMicaEngine,
+    SequenceDetector,
+    dense_detection,
+    populate_v3_database,
+)
 
 
 def build_app() -> Any:
@@ -55,7 +61,20 @@ def build_app() -> Any:
     database.set_metadata("dataset_root", str(dataset))
     database.set_metadata("indexing_status", "complete")
     database.set_metadata("landmark_version", "structural-v2-dense-weighted-three-view")
-    return create_app(settings, detector)
+    v3_database = V3Database(root / "v3.sqlite3")
+    populate_v3_database(v3_database, root / "commons")
+    settings = Settings(
+        root,
+        root / "model.task",
+        root / "index.sqlite3",
+        dataset,
+        8 * 1024 * 1024,
+        1000,
+        8,
+        v3_database_path=root / "v3.sqlite3",
+        v3_dataset_path=root / "commons",
+    )
+    return create_app(settings, detector, FakeMicaEngine())
 
 
 if __name__ == "__main__":

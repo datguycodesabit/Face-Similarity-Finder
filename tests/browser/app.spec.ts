@@ -15,7 +15,7 @@ async function selectThreeViews(page) {
 
 test('three-view analysis shows shape, haircut guidance, matches, and overlays', async ({ page }, testInfo) => {
   await page.goto('/');
-  await expect(page.getByText('6 eligible identities')).toBeVisible();
+  await expect(page.getByText('6 calibrated Commons prototypes')).toBeVisible();
   await expect(page.getByRole('heading', { name: /Find faces shaped like yours/ })).toBeVisible();
 
   await selectThreeViews(page);
@@ -32,14 +32,15 @@ test('three-view analysis shows shape, haircut guidance, matches, and overlays',
   await expect(page.locator('#shapeBlend')).toContainText(/Mostly/);
   await expect(page.locator('#diagnosticsGrid > div')).toHaveCount(3);
   await expect(page.locator('#loadingBox')).toBeHidden();
-  await expect(page.locator('.result-card canvas').first()).toBeVisible();
-  await page.getByText('Dense mesh', { exact: true }).click();
-  await expect(page.locator('.result-card canvas').first()).toBeHidden();
+  await expect(page.locator('.jaw-panel').first()).toBeVisible();
+  await page.locator('.jaw-panel').first().locator('summary').click();
+  await page.screenshot({ path: testInfo.outputPath('desktop-v3-results.png'), fullPage: true });
+  await page.getByText('Jaw comparison', { exact: true }).click();
+  await expect(page.locator('.jaw-panel').first()).toBeHidden();
   await page.locator('#frontInput').setInputFiles(views.rightInput);
   await expect(page.locator('#resultsSection')).toBeHidden();
   await expect(page.locator('#selectionNote')).toContainText('Photos changed');
   await expect(page.getByRole('button', { name: /Analyze new photos/ })).toBeEnabled();
-  await page.screenshot({ path: testInfo.outputPath('desktop-v2-results.png'), fullPage: true });
 });
 
 test('incorrect pose guidance can be corrected without reselecting photos', async ({ page }) => {
@@ -74,7 +75,7 @@ test('mobile layout supports the full matching flow', async ({ page }, testInfo)
   await page.getByRole('button', { name: /Analyze face shape/ }).click();
   await expect(page.locator('.result-card')).toHaveCount(5);
   await expect(page.locator('.haircut-card')).toHaveCount(3);
-  await page.screenshot({ path: testInfo.outputPath('mobile-v2-results.png'), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('mobile-v3-results.png'), fullPage: true });
 });
 
 test('unsupported uploads show an actionable error state', async ({ page }, testInfo) => {

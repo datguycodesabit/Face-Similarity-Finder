@@ -18,6 +18,7 @@ from .geometry import (
     select_landmarks,
     shape_measurements,
 )
+from .shape_v3 import normalize_v3_landmarks, shape_descriptors
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,8 @@ class Detection:
     eligible: bool = True
     exclusion_reason: str | None = None
     legacy_normalized: NDArray[np.float64] | None = None
+    v3_normalized: NDArray[np.float64] | None = None
+    v3_measurements: dict[str, float] = field(default_factory=dict)
 
 
 class Detector(Protocol):
@@ -41,7 +44,7 @@ class Detector(Protocol):
 
 
 class MediaPipeDetector:
-    model_version = "mediapipe-face-landmarker-v2"
+    model_version = "mediapipe-face-landmarker-v2-v3-standard-crop"
 
     def __init__(self, model_path: Path) -> None:
         if not model_path.is_file():
@@ -49,7 +52,7 @@ class MediaPipeDetector:
                 f"MediaPipe model missing at {model_path}. Run: uv run face-match setup-model"
             )
         digest = hashlib.sha256(model_path.read_bytes()).hexdigest()
-        self.model_version = f"mediapipe-face-landmarker-v2-sha256-{digest}"
+        self.model_version = f"mediapipe-face-landmarker-v2-v3-crop-sha256-{digest}"
         import mediapipe as mp  # type: ignore[import-untyped]
 
         options = mp.tasks.vision.FaceLandmarkerOptions(
@@ -64,7 +67,7 @@ class MediaPipeDetector:
         self._mp = mp
         self._landmarker = mp.tasks.vision.FaceLandmarker.create_from_options(options)
 
-    def detect_one(self, image: Image.Image) -> Detection:
+    def _detect(self, image: Image.Image) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         rgb = np.asarray(image.convert("RGB"), dtype=np.uint8)
         result = self._landmarker.detect(
             self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=rgb)
@@ -74,6 +77,33 @@ class MediaPipeDetector:
             raise FaceCountError(count)
         full = np.asarray([[p.x, p.y, p.z] for p in result.face_landmarks[0]], dtype=np.float64)
         matrix = np.asarray(result.facial_transformation_matrixes[0], dtype=np.float64)
+        return full, matrix
+
+    @staticmethod
+    def _standardized_crop(image: Image.Image, full: NDArray[np.float64]) -> Image.Image:
+        pixel_x = full[:, 0] * image.width
+        pixel_y = full[:, 1] * image.height
+        width = float(np.ptp(pixel_x))
+        height = float(np.ptp(pixel_y))
+        side = max(width, height) * 1.55
+        center_x = float((pixel_x.min() + pixel_x.max()) / 2.0)
+        center_y = float((pixel_y.min() + pixel_y.max()) / 2.0)
+        box = (
+            center_x - side / 2.0,
+            center_y - side / 2.0,
+            center_x + side / 2.0,
+            center_y + side / 2.0,
+        )
+        return image.transform(
+            (512, 512),
+            Image.Transform.EXTENT,
+            box,
+            resample=Image.Resampling.BILINEAR,
+            fillcolor=(0, 0, 0),
+        )
+
+    def detect_one(self, image: Image.Image) -> Detection:
+        full, matrix = self._detect(image)
         rotation = matrix[:3, :3]
         yaw = float(np.degrees(np.arctan2(rotation[0, 2], rotation[2, 2])))
         pitch = float(
@@ -87,6 +117,11 @@ class MediaPipeDetector:
         roll = float(np.degrees(np.arctan2(rotation[1, 0], rotation[0, 0])))
         selected = select_dense_landmarks(full)
         normalized = normalize_dense_landmarks(selected, rotation)
+        standardized = self._standardized_crop(image, full)
+        v3_full, v3_matrix = self._detect(standardized)
+        v3_normalized = normalize_v3_landmarks(
+            v3_full, standardized.width, standardized.height, v3_matrix[:3, :3]
+        )
         legacy_normalized = normalize_landmarks(select_landmarks(full))
         in_frame = np.mean(
             (full[:, 0] >= 0.0) & (full[:, 0] <= 1.0) & (full[:, 1] >= 0.0) & (full[:, 1] <= 1.0)
@@ -116,6 +151,8 @@ class MediaPipeDetector:
             eligible=not reasons,
             exclusion_reason="; ".join(reasons) or None,
             legacy_normalized=legacy_normalized,
+            v3_normalized=v3_normalized,
+            v3_measurements=shape_descriptors(v3_normalized),
         )
 
     def close(self) -> None:
