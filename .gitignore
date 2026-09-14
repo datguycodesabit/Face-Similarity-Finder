@@ -1,17 +1,26 @@
 .DS_Store
+.idea/
+.vscode/
+.env
+.env.*
 .venv/
 .uv-cache/
 .uv-python/
+.pnpm-store/
+.mplconfig/
 .browser-fixture/
-artifacts/screenshots/.last-run.json
-artifacts/screenshots/**/trace.zip
-artifacts/screenshots/**/error-context.md
+artifacts/
 node_modules/
 .playwright-browsers/
 __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
 test-results/
 playwright-report/
 models/
@@ -22,3 +31,8 @@ data/
 *.task
 *.tgz
 *.tar.gz
+
+# A small GitHub clone was accidentally created inside the real project.
+# Keep it local so GitHub Desktop never tries to commit a repository inside
+# another repository. The real project root is this directory.
+Face-Similarity-Finder/

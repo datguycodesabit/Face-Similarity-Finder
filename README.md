@@ -2,6 +2,8 @@
 
 A local-first haircut-planning tool that combines front, left three-quarter, and right three-quarter portraits into a pose-corrected facial-shape profile. It returns five structurally similar **Labeled Faces in the Wild (LFW)** references, blended face-shape labels, measurements, and three deterministic haircut directions.
 
+To publish or update this project using GitHub Desktop, follow [GITHUB_DESKTOP.md](GITHUB_DESKTOP.md). The dataset, generated index, MediaPipe model, local environments, and test artifacts are intentionally excluded from Git.
+
 This is a structural comparison, not face recognition, identity verification, or a same-person probability. It uses no identity embeddings and makes no inference about protected traits.
 
 ## Quick start (macOS, Python 3.11)
